@@ -6,7 +6,7 @@
 (function () {
   'use strict';
 
-  var APP_VERSION = '1.0.2';
+  var APP_VERSION = '1.0.3';
 
   /* ---------------- tiny IndexedDB wrapper ---------------- */
   var dbp = null;
@@ -614,7 +614,6 @@
         '<span class="row"><span class="code">' + esc(p.code) + '</span><span class="small">' + n + (n === 1 ? ' entry' : ' entries') + '</span></span>' +
         '<span class="name">' + esc(p.name) + '</span>' +
         '<span class="small">' + esc(p.ownerKey ? p.ownerName : 'Your property') + '</span>' +
-        (p.hourly && p.ownerKey ? '<span class="tag-hourly">Hourly extras · ' + rate(propRate(p)) + '/h</span>' : '') +
         '</button>';
     }).join('');
     tiles += '<button class="tile dark" data-action="goMonth">' + ICON.doc +
