@@ -6,7 +6,7 @@
 (function () {
   'use strict';
 
-  var APP_VERSION = '1.0.0';
+  var APP_VERSION = '1.0.1';
 
   /* ---------------- tiny IndexedDB wrapper ---------------- */
   var dbp = null;
@@ -19,21 +19,34 @@
         if (!d.objectStoreNames.contains('kv')) d.createObjectStore('kv');
         if (!d.objectStoreNames.contains('queue')) d.createObjectStore('queue', { keyPath: 'id' });
       };
-      req.onsuccess = function () { resolve(req.result); };
-      req.onerror = function () { reject(req.error); };
+      req.onsuccess = function () {
+        var d = req.result;
+        // iPhones can close storage while the app is in the background; reopen next time.
+        d.onclose = function () { dbp = null; };
+        d.onversionchange = function () { try { d.close(); } catch (e) { /* already closed */ } dbp = null; };
+        resolve(d);
+      };
+      req.onerror = function () { dbp = null; reject(req.error); };
     });
     return dbp;
   }
-  function tx(store, mode, fn) {
+  function isClosedDbError(err) {
+    return !!err && (err.name === 'InvalidStateError' || /clos(ing|ed)/i.test(String(err.message || '')));
+  }
+  function tx(store, mode, fn, retried) {
     return db().then(function (d) {
       return new Promise(function (resolve, reject) {
-        var t = d.transaction(store, mode);
+        var t;
+        try { t = d.transaction(store, mode); } catch (err) { reject(err); return; }
         var s = t.objectStore(store);
         var out = fn(s);
         t.oncomplete = function () { resolve(out instanceof IDBRequest ? out.result : undefined); };
         t.onerror = function () { reject(t.error); };
         t.onabort = function () { reject(t.error); };
       });
+    }).catch(function (err) {
+      if (!retried && isClosedDbError(err)) { dbp = null; return tx(store, mode, fn, true); }
+      throw err;
     });
   }
   var kvGet = function (k) { return tx('kv', 'readonly', function (s) { return s.get(k); }); };
@@ -736,7 +749,7 @@
   }
 
   // test hook (harmless in production)
-  window.__mw = { state: S, syncNow: syncNow, render: render };
+  window.__mw = { state: S, syncNow: syncNow, render: render, closeDb: function () { return dbp ? dbp.then(function (d) { d.close(); }) : Promise.resolve(); } };
 
   start();
 })();
