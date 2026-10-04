@@ -2,7 +2,7 @@
  * App files are served from the cache and refreshed in the background,
  * so a new version arrives the next time the app is opened.
  * Requests to Google (the back end) are never cached here. */
-var CACHE = 'mw-joblog-v2';
+var CACHE = 'mw-joblog-v3';
 var SHELL = ['./', './index.html', './styles.css', './app.js', './manifest.webmanifest',
   './icons/icon-180.png', './icons/icon-192.png', './icons/icon-512.png'];
 
