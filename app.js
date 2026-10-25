@@ -6,7 +6,7 @@
 (function () {
   'use strict';
 
-  var APP_VERSION = '1.0.4';
+  var APP_VERSION = '1.0.5';
 
   /* ---------------- tiny IndexedDB wrapper ---------------- */
   var dbp = null;
@@ -122,6 +122,7 @@
     grid: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="4" width="7" height="7" rx="1.5"/><rect x="13" y="4" width="7" height="7" rx="1.5"/><rect x="4" y="13" width="7" height="7" rx="1.5"/><rect x="13" y="13" width="7" height="7" rx="1.5"/></svg>',
     doc: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 3h7l4 4v14H7z"/><path d="M14 3v4h4M10 12h5M10 16h5"/></svg>',
     share: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"/><path d="M8 7l4-4 4 4"/><path d="M5 12v8h14v-8"/></svg>',
+    more: '<svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg>',
     sync: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 11a8 8 0 0 0-14.3-4.9L4 8"/><path d="M4 4v4h4"/><path d="M4 13a8 8 0 0 0 14.3 4.9L20 16"/><path d="M20 20v-4h-4"/></svg>'
   };
 
@@ -214,7 +215,7 @@
       items.forEach(function (item) {
         chain = chain.then(function () {
           if (stop || item.failed) return;
-          var send = {
+          var send = item.op ? { id: item.id, op: item.op, target: item.target, prop: item.prop, fields: item.fields || {} } : {
             id: item.id, date: item.date, prop: item.prop, kind: item.kind, desc: item.desc,
             hours: item.hours, amount: item.amount, paidBy: item.paidBy, helper: item.helper,
             billable: item.billable, loggedAt: item.loggedAt, receiptOf: item.receiptOf || null,
@@ -277,7 +278,7 @@
       loadMonth();
     },
     goStatus: function () { S.screen = 'status'; render(); window.scrollTo(0, 0); },
-    openProp: function (el) { S.prop = el.getAttribute('data-code'); S.screen = 'prop'; render(); window.scrollTo(0, 0); },
+    openProp: function (el) { S.modal = null; S.prop = el.getAttribute('data-code'); S.screen = 'prop'; render(); window.scrollTo(0, 0); },
     backToProp: function () { S.modal = null; S.screen = 'prop'; render(); window.scrollTo(0, 0); },
     openForm: function (el) {
       var kind = el.getAttribute('data-kind');
@@ -300,7 +301,7 @@
     pickPaid: function (el) { S.form.paidBy = el.getAttribute('data-paid'); render(); },
     openRate: function () {
       var p = propBy(S.prop);
-      S.form.rateOpen = true; S.form.rateText = String(propRate(p)); S.form.rateAsked = false; render();
+      S.form.rateOpen = true; S.form.rateText = String(baseRate(S.form, p)); S.form.rateAsked = false; render();
       var inp = app.querySelector('[data-field="rateText"]');
       if (inp) { inp.focus(); try { inp.select(); } catch (e) { /* ignore */ } }
     },
@@ -310,6 +311,10 @@
       S.form.rateAsked = true; S.modal = null; saveEntry();
     },
     closeModal: function () { S.modal = null; render(); },
+    entryMenu: function (el) { S.modal = { type: 'entry', id: el.getAttribute('data-id') }; render(); },
+    editEntry: function () { var id = S.modal && S.modal.id; S.modal = null; openEdit(id); },
+    askDelete: function () { S.modal = { type: 'delete', id: S.modal && S.modal.id }; render(); },
+    confirmDelete: function () { var id = S.modal && S.modal.id; S.modal = null; deleteEntry(id); },
     toggleBillable: function () { S.form.billable = !S.form.billable; render(); },
     toggleSplit: function (el) {
       var c = el.getAttribute('data-code');
@@ -375,7 +380,7 @@
   var WHEEL_ITEM = 40;
   var WHEEL = { h: { max: 12, label: 'hours' }, m: { max: 3, label: 'minutes' } };
   var wheelTimers = {};
-  function formHours(f) { return f.wh + f.wm * 0.25; }
+  function formHours(f) { return f.hoursExact !== undefined && !f.wheelTouched ? f.hoursExact : f.wh + f.wm * 0.25; }
   function wheelIndex(col) {
     var max = WHEEL[col.getAttribute('data-col')].max;
     return Math.max(0, Math.min(max, Math.round(col.scrollTop / WHEEL_ITEM)));
@@ -390,7 +395,7 @@
     markWheel(col, i);
     col.setAttribute('aria-valuenow', String(i));
     col.setAttribute('aria-valuetext', key === 'wh' ? i + ' hours' : (i * 15) + ' minutes');
-    if (S.form[key] !== i) { S.form[key] = i; S.form.error = ''; var er = app.querySelector('.error[role="alert"]'); if (er) er.remove(); }
+    if (S.form[key] !== i) { S.form[key] = i; S.form.wheelTouched = true; S.form.error = ''; var er = app.querySelector('.error[role="alert"]'); if (er) er.remove(); }
     updateLive();
   }
   app.addEventListener('scroll', function (ev) {
@@ -417,8 +422,10 @@
   // The form's effective hourly rate: a custom one being typed, or the property's usual rate.
   function formRate(f, p) {
     var t = num(f.rateText);
-    return f.rateOpen && t > 0 ? t : propRate(p);
+    return f.rateOpen && t > 0 ? t : baseRate(f, p);
   }
+  // The rate the form starts from: an edited entry keeps its own rate, a new log uses the property's usual rate.
+  function baseRate(f, p) { return f.editId && f.origRate > 0 ? f.origRate : propRate(p); }
   function rateShown(f, p) { return f.kind === 'hours' && !!p.ownerKey && f.billable; }
   // Updates the "1.5 h × $65 = $97.50" line without redrawing the screen (keeps the wheel moving smoothly).
   function updateLive() {
@@ -466,6 +473,7 @@
     var hourly = formRate(f, p);
     var custom = rateShown(f, p) && f.rateOpen && String(f.rateText).trim() !== '' && hourly !== usual;
     if (rateShown(f, p) && f.rateOpen && String(f.rateText).trim() !== '' && !(num(f.rateText) > 0)) { f.error = 'Enter the hourly rate, e.g. 75.'; render(); return; }
+    if (f.editId) { saveEdit(f, p, hours, amt, helper, isNewHelper, hourly); return; }
     if (custom && !f.rateAsked) { S.modal = { type: 'rate', rate: hourly }; render(); return; }
 
     var targets = [p.code].concat(f.split);
@@ -515,6 +523,67 @@
     }).catch(function (err) {
       f.error = 'Could not save on this phone: ' + (err && err.message ? err.message : err); render();
     });
+  }
+
+  /* ---------------- edit or delete an entry ---------------- */
+  function findEntry(id) {
+    var list = entriesFor(S.prop);
+    for (var i = 0; i < list.length; i++) if (list[i].id === id) return list[i];
+    return null;
+  }
+  function openEdit(id) {
+    var e = findEntry(id), p = propBy(S.prop);
+    if (!e || !p) { render(); return; }
+    var hours = e.hours || 0;
+    var known = ((S.config && S.config.helpers) || []).some(function (x) { return x.name === e.helper; });
+    S.form = {
+      kind: e.kind, date: e.date, wh: Math.min(12, Math.floor(hours)), wm: Math.round((hours % 1) / 0.25) % 4,
+      hoursExact: hours, wheelTouched: false,
+      amount: e.kind === 'hours' ? '' : String(e.amount || ''), note: e.desc || '',
+      paidBy: e.paidBy || 'mine', billable: e.kind === 'help' ? true : !!e.billable,
+      origRate: e.rate || 0, rateOpen: false, rateText: '', saveRate: false, rateAsked: true,
+      helper: known ? e.helper : '', helperNew: known ? '' : (e.helper || ''),
+      split: [], photo: null, photoUrl: '', hadReceipt: !!e.receipt, error: '',
+      editId: id, editQueued: e.state !== 'sent' && !e.pendingEdit
+    };
+    S.screen = 'form'; render(); window.scrollTo(0, 0);
+  }
+  function saveEdit(f, p, hours, amt, helper, isNewHelper, hourly) {
+    var fields = { date: f.date || today(), desc: (f.note || '').trim() || (f.kind === 'purchase' ? 'Purchase' : f.kind === 'help' ? 'Hired help' : 'Work') };
+    if (f.kind === 'purchase') { fields.amount = amt; fields.paidBy = p.ownerKey ? f.paidBy : 'mine'; }
+    else if (f.kind === 'help') { fields.amount = amt; fields.hours = hours || 0; fields.helper = helper; fields.billable = true; }
+    else { fields.hours = hours; fields.billable = !!f.billable; fields.rate = hourly; }
+    var chain;
+    if (f.editQueued) {
+      // Not sent yet: change the waiting entry itself.
+      chain = qAll().then(function (items) {
+        var item = items.filter(function (q) { return q.id === f.editId; })[0];
+        if (!item) throw new Error('entry not found on this phone');
+        Object.keys(fields).forEach(function (k) { item[k] = fields[k]; });
+        if (f.photo) { item.photo = f.photo; delete item.receiptOf; }
+        delete item.failed;
+        return qPut(item);
+      });
+    } else {
+      var op = { id: uid(), seq: Date.now(), op: 'update', target: f.editId, prop: p.code, kind: f.kind, fields: fields, loggedAt: new Date().toISOString() };
+      if (f.photo) op.photo = f.photo;
+      chain = qPut(op);
+    }
+    if (isNewHelper) { S.config.helpers = (S.config.helpers || []).concat([{ name: helper, rate: null }]); chain = chain.then(function () { return kvSet('config', S.config); }); }
+    chain.then(loadQueue).then(function () {
+      if (f.photoUrl) URL.revokeObjectURL(f.photoUrl);
+      S.form = null; S.screen = 'prop'; render(); window.scrollTo(0, 0);
+      flash('Entry updated');
+      syncNow();
+    }).catch(function (err) { f.error = 'Could not save the change: ' + (err && err.message ? err.message : err); render(); });
+  }
+  function deleteEntry(id) {
+    var e = findEntry(id), p = propBy(S.prop);
+    if (!e || !p) { render(); return; }
+    var chain = e.state !== 'sent' && !e.pendingEdit
+      ? qDel(id)   // never sent: just drop it from the phone
+      : qPut({ id: uid(), seq: Date.now(), op: 'void', target: id, prop: p.code, kind: e.kind, loggedAt: new Date().toISOString() });
+    chain.then(loadQueue).then(function () { render(); flash('Entry deleted'); syncNow(); });
   }
 
   function loadMonth(force) {
@@ -626,13 +695,24 @@
         return { id: e.id, kind: kind, date: e.date, desc: e.desc, hours: e.hours, amount: e.amount,
           paidBy: e.paidWith === 'Owner card' ? 'owner' : 'mine', helper: e.helper, billable: e.billable, receipt: e.hasReceipt, rate: e.rate, state: 'sent', seq: 0 };
       });
-    var queued = S.queue.filter(function (q) { return q.prop === code; }).map(function (q) {
+    var queued = S.queue.filter(function (q) { return q.prop === code && !q.op; }).map(function (q) {
       return { id: q.id, kind: q.kind, date: q.date, desc: q.desc, hours: q.hours, amount: q.amount, paidBy: q.paidBy,
         helper: q.helper, billable: q.billable, receipt: !!(q.photo || q.receiptOf), rate: q.rate, state: q.failed ? 'failed' : 'queued', seq: q.seq };
     });
     var queuedIds = {};
     queued.forEach(function (q) { queuedIds[q.id] = 1; });
-    return queued.concat(recent.filter(function (r) { return !queuedIds[r.id]; }))
+    // Edits and deletes waiting to send are shown as if already done.
+    var voided = {};
+    S.queue.forEach(function (q) {
+      if (q.op === 'void') voided[q.target] = 1;
+      if (q.op === 'update') recent.forEach(function (r) {
+        if (r.id !== q.target) return;
+        Object.keys(q.fields || {}).forEach(function (k) { r[k] = q.fields[k]; });
+        if (q.photo) r.receipt = true;
+        r.state = q.failed ? 'failed' : 'queued'; r.pendingEdit = true; r.seq = q.seq;
+      });
+    });
+    return queued.concat(recent.filter(function (r) { return !queuedIds[r.id]; })).filter(function (r) { return !voided[r.id]; })
       .sort(function (a, b) { return a.date < b.date ? 1 : a.date > b.date ? -1 : b.seq - a.seq; });
   }
 
@@ -675,11 +755,13 @@
     if (e.kind === 'hours') { meta += ' · ' + (p.ownerKey ? (e.billable ? 'billable at ' + rate(hourly) + '/h' : 'covered by fee') : 'your property'); right = hrs(e.hours); }
     if (e.kind === 'purchase') { meta += ' · ' + (e.paidBy === 'owner' ? p.code + ' owner card' : 'my card') + (e.receipt ? ' · receipt attached' : ' · no receipt'); right = money(e.amount); }
     if (e.kind === 'help') { title = (e.helper || 'Contractor') + ': ' + e.desc; if (e.hours) meta += ' · ' + hrs(e.hours); right = money(helpTotal(e)); }
-    if (e.state === 'queued') meta += ' · waiting to send';
+    if (e.state === 'queued') meta += e.pendingEdit ? ' · change waiting to send' : ' · waiting to send';
     if (e.state === 'failed') meta += ' · not accepted, see Status';
     return '<div class="entry ' + (e.state === 'sent' ? '' : e.state) + '"><span class="ico">' + ico.replace(/width="24" height="24"/, 'width="18" height="18"') + '</span>' +
       '<div class="txt"><div class="title">' + esc(title) + '</div><div class="meta">' + esc(meta) + '</div></div>' +
-      '<div class="right">' + esc(right) + '</div></div>';
+      '<div class="right">' + esc(right) + '</div>' +
+      (e.state === 'failed' ? '' : '<button class="more-btn" data-action="entryMenu" data-id="' + esc(e.id) + '" aria-label="Edit or delete this entry">' + ICON.more + '</button>') +
+      '</div>';
   }
 
   function renderProp() {
@@ -718,7 +800,7 @@
     var f = S.form, p = propBy(S.prop);
     if (!f || !p) { S.screen = 'home'; return renderHome(); }
     var cfg = S.config || {};
-    var title = f.kind === 'hours' ? 'Log hours' : f.kind === 'purchase' ? 'Log purchase' : 'Log hired help';
+    var title = (f.editId ? 'Edit ' : 'Log ') + (f.kind === 'hours' ? 'hours' : f.kind === 'purchase' ? 'purchase' : 'hired help');
     var ownerFirst = p.ownerKey ? (p.ownerLabel || p.ownerName.split(' ')[0]) : '';
     var h = [];
     h.push('<main class="screen no-tabs"><div class="pad" style="padding-top:calc(8px + var(--safe-top))">');
@@ -745,11 +827,11 @@
     }
 
     if (rateShown(f, p)) {
-      var usual = propRate(p);
+      var usual = baseRate(f, p);
       h.push('<div class="field"><label class="label" for="fr">Hourly rate</label>' + (f.rateOpen
         ? '<div class="money"><span>$</span><input id="fr" data-field="rateText" inputmode="decimal" placeholder="' + esc(String(usual)) + '" value="' + esc(f.rateText) + '"><span style="font-size:15px">/h</span></div>' +
-          '<button class="linkbtn" data-action="resetRate">Back to the usual ' + esc(rate(usual)) + '/h</button>'
-        : '<div class="card"><span><b style="font-size:20px">' + esc(rate(usual)) + '/h</b><br><span class="small">Usual rate for ' + esc(p.name) + '</span></span><button class="toggle" data-action="openRate">Change</button></div>') +
+          '<button class="linkbtn" data-action="resetRate">Back to ' + (f.editId ? '' : 'the usual ') + esc(rate(usual)) + '/h</button>'
+        : '<div class="card"><span><b style="font-size:20px">' + esc(rate(usual)) + '/h</b><br><span class="small">' + (f.editId ? 'Rate for this entry' : 'Usual rate for ' + esc(p.name)) + '</span></span><button class="toggle" data-action="openRate">Change</button></div>') +
         '</div>');
     }
 
@@ -760,7 +842,7 @@
     if (f.kind === 'purchase') {
       h.push('<div class="field">' + (f.photo
         ? '<div class="card"><span style="display:flex;align-items:center;gap:12px"><img class="thumb" src="' + f.photoUrl + '" alt="Receipt photo"><span><b>Receipt attached</b><br><span class="small">Saved on this phone until sent</span></span></span><button class="toggle" data-action="takePhoto">Retake</button></div>'
-        : '<button class="photo-btn" data-action="takePhoto">' + ICON.camera + '<span>Take receipt photo</span></button>') + '</div>');
+        : '<button class="photo-btn" data-action="takePhoto">' + ICON.camera + '<span>' + (f.hadReceipt ? 'Receipt attached · tap to replace it' : 'Take receipt photo') + '</span></button>') + '</div>');
       h.push('<div class="field"><label class="label" for="fa">Amount</label><div class="money"><span>$</span><input id="fa" data-field="amount" inputmode="decimal" placeholder="0.00" value="' + esc(f.amount) + '"></div></div>');
       if (p.ownerKey) {
         h.push('<div class="field"><div class="label">Paid with</div><div class="grid2">' +
@@ -782,14 +864,14 @@
       '</div></div>');
 
     var others = ((cfg.properties) || []).filter(function (x) { return x.code !== p.code; });
-    if (others.length) {
+    if (others.length && !f.editId) {
       h.push('<div class="field"><div class="label">Covers more than one property?</div><div class="small">Tap the others to split this entry evenly.</div><div class="wrap">' +
         others.map(function (x) { return chip(f.split.indexOf(x.code) >= 0, x.code, 'data-action="toggleSplit" data-code="' + esc(x.code) + '" aria-label="Split with ' + esc(x.name) + '"', 'sm'); }).join('') +
         '</div></div>');
     }
     if (f.error) h.push('<div class="error" role="alert">' + esc(f.error) + '</div>');
     h.push('</div></main>');
-    var label = f.split.length ? 'Save · split across ' + (f.split.length + 1) + ' properties' : 'Save to ' + p.name;
+    var label = f.editId ? 'Save changes' : f.split.length ? 'Save · split across ' + (f.split.length + 1) + ' properties' : 'Save to ' + p.name;
     h.push('<div class="savebar"><div class="savebar-inner"><button class="primary" data-action="save">' + esc(label) + '</button></div></div>');
     return h.join('');
   }
@@ -809,7 +891,24 @@
 
   function renderModal() {
     var m = S.modal, p = propBy(S.prop);
-    if (!m || !p || !S.form) return '';
+    if (!m || !p) return '';
+    if (m.type === 'entry' || m.type === 'delete') {
+      var e = findEntry(m.id);
+      if (!e) return '';
+      var what = e.kind === 'hours' ? hrs(e.hours) : money(e.kind === 'help' ? helpTotal(e) : e.amount);
+      var head = '<div class="sheet-back" data-action="closeModal"></div><div class="sheet" role="dialog" aria-modal="true" aria-labelledby="sheet-q">';
+      if (m.type === 'entry') return head +
+        '<h2 id="sheet-q">' + esc(shortDate(e.date) + ' · ' + what) + '</h2><p class="sub">' + esc((e.kind === 'help' ? (e.helper || 'Contractor') + ': ' : '') + e.desc) + '</p>' +
+        '<button class="primary" data-action="editEntry">Edit entry</button>' +
+        '<button class="secondary danger" data-action="askDelete">Delete entry</button>' +
+        '<button class="linkbtn" style="align-self:center" data-action="closeModal">Cancel</button></div>';
+      return head +
+        '<h2 id="sheet-q">Delete this entry?</h2><p class="sub">' + esc(shortDate(e.date) + ' · ' + what + ' · ' + e.desc) + '</p>' +
+        '<p class="small">' + (e.state !== 'sent' && !e.pendingEdit ? 'It hasn’t been sent yet, so it’s simply removed from this phone.' : 'It drops off statements and invoices. In the Sheet it’s marked Void, so it can be brought back there if needed.') + '</p>' +
+        '<button class="primary danger-fill" data-action="confirmDelete">Delete</button>' +
+        '<button class="secondary" data-action="closeModal">Keep it</button></div>';
+    }
+    if (!S.form) return '';
     return '<div class="sheet-back" data-action="closeModal"></div>' +
       '<div class="sheet" role="dialog" aria-modal="true" aria-labelledby="sheet-q">' +
       '<h2 id="sheet-q">Use ' + esc(rate(m.rate)) + '/h for all future logs at ' + esc(p.name) + '?</h2>' +
@@ -919,7 +1018,7 @@
     else if (S.screen === 'month') html = renderMonth();
     else if (S.screen === 'status') html = renderStatus();
     else html = renderHome();
-    if (S.screen === 'form' && S.modal) html += renderModal();
+    if ((S.screen === 'form' || S.screen === 'prop') && S.modal) html += renderModal();
     if (S.toast) html += '<div class="toast" role="status">' + ICON.check + '<span>' + esc(S.toast) + '</span></div>';
     if (html === lastHtml && app.firstChild) return;   // nothing changed: leave the screen alone (keeps a spinning wheel spinning)
     var spinning = {};
