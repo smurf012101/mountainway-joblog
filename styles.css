@@ -112,6 +112,7 @@ textarea { width: 100%; padding: 12px 14px; border: 1px solid var(--field); bord
 .savebar-inner { max-width: 520px; margin: 0 auto; }
 .primary { width: 100%; min-height: 54px; background: var(--pine); color: #fff; border: 0; border-radius: 14px; font-size: 17px; font-weight: 600; }
 .primary[disabled] { opacity: .6; }
+.share-btn { display: flex; align-items: center; justify-content: center; gap: 10px; }
 .secondary { width: 100%; min-height: 52px; border-radius: 14px; border: 1px solid var(--pine); background: var(--surface); color: var(--pine); font-size: 15px; font-weight: 600; text-decoration: none; display: flex; align-items: center; justify-content: center; }
 
 /* hours wheel, like the iPhone alarm picker */
