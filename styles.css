@@ -80,6 +80,10 @@ h2 { margin: 0; font-family: var(--display); font-weight: 600; font-size: 20px; 
 .entry .title { font-size: 14px; line-height: 1.35; overflow-wrap: anywhere; }
 .entry .meta { font-size: 12px; color: var(--muted); }
 .entry .right { font-size: 14px; font-weight: 600; white-space: nowrap; }
+.more-btn { flex-shrink: 0; width: 40px; height: 40px; margin: -8px -8px -8px -4px; border: 0; border-radius: 10px; background: none; color: var(--muted); display: flex; align-items: center; justify-content: center; }
+.more-btn:active { background: var(--line-soft); }
+.secondary.danger { color: var(--err-ink); border-color: #E3B3A5; }
+.primary.danger-fill { background: var(--err-ink); }
 .entry.queued { border-style: dashed; border-color: #D8BE7E; background: #FFFBF1; }
 .entry.failed { border-color: #EBC2B6; background: #FFF6F3; }
 .empty { padding: 18px; border: 1px dashed var(--field); border-radius: 12px; font-size: 14px; color: var(--muted); text-align: center; }
