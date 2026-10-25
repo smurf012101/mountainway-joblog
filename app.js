@@ -6,7 +6,7 @@
 (function () {
   'use strict';
 
-  var APP_VERSION = '1.0.3';
+  var APP_VERSION = '1.0.4';
 
   /* ---------------- tiny IndexedDB wrapper ---------------- */
   var dbp = null;
@@ -121,6 +121,7 @@
     warn: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 6v8M12 18v.5"/></svg>',
     grid: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="4" width="7" height="7" rx="1.5"/><rect x="13" y="4" width="7" height="7" rx="1.5"/><rect x="4" y="13" width="7" height="7" rx="1.5"/><rect x="13" y="13" width="7" height="7" rx="1.5"/></svg>',
     doc: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 3h7l4 4v14H7z"/><path d="M14 3v4h4M10 12h5M10 16h5"/></svg>',
+    share: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"/><path d="M8 7l4-4 4 4"/><path d="M5 12v8h14v-8"/></svg>',
     sync: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 11a8 8 0 0 0-14.3-4.9L4 8"/><path d="M4 4v4h4"/><path d="M4 13a8 8 0 0 0 14.3 4.9L20 16"/><path d="M20 20v-4h-4"/></svg>'
   };
 
@@ -139,7 +140,7 @@
     lastSyncAt: null,
     toast: '',
     modal: null,       // { type: 'rate', rate } while asking about a custom rate
-    month: { owner: null, month: thisMonth(), data: null, loading: false, error: '', cachedAt: null },
+    month: { owner: null, month: thisMonth(), data: null, loading: false, error: '', cachedAt: null, inv: null },
     setup: { url: '', passcode: '', busy: false, error: '' }
   };
   var toastTimer = null;
@@ -323,8 +324,10 @@
     },
     save: function () { saveEntry(); },
     syncNow: function () { syncNow({ announce: true }); },
-    pickOwner: function (el) { S.month.owner = el.getAttribute('data-key'); S.month.data = null; render(); loadMonth(); },
-    pickMonth: function (el) { S.month.month = el.getAttribute('data-month'); S.month.data = null; render(); loadMonth(); },
+    pickOwner: function (el) { S.month.owner = el.getAttribute('data-key'); S.month.data = null; S.month.inv = null; render(); loadMonth(); },
+    pickMonth: function (el) { S.month.month = el.getAttribute('data-month'); S.month.data = null; S.month.inv = null; render(); loadMonth(); },
+    prepInvoice: function () { prepInvoice(); },
+    shareInvoice: function () { shareInvoice(); },
     reloadMonth: function () { loadMonth(true); },
     connect: function () { connect(); },
     changeConnection: function () {
@@ -530,6 +533,46 @@
         m.error = err.offline ? 'No signal. Month-end needs a connection.' : 'Could not load: ' + (err.message || err);
       }).finally(function () { m.loading = false; render(); });
     });
+  }
+
+  /* ---------------- invoice PDF: prepare, then share ---------------- */
+  function base64ToBlob(b64, type) {
+    var bin = atob(b64), bytes = new Uint8Array(bin.length);
+    for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    return new Blob([bytes], { type: type });
+  }
+  function prepInvoice() {
+    var m = S.month, owner = m.owner, month = m.month;
+    if (!owner) return;
+    m.inv = { owner: owner, month: month, busy: true, error: '' }; render();
+    call({ action: 'invoice', owner: owner, month: month }, 60000).then(function (res) {
+      if (!res || !res.ok) throw new Error((res && res.error) || 'failed');
+      var blob = base64ToBlob(res.base64, 'application/pdf');
+      var file = null;
+      try { file = new File([blob], res.fileName, { type: 'application/pdf' }); } catch (e) { file = null; }
+      if (S.month.owner !== owner || S.month.month !== month) return;
+      S.month.inv = { owner: owner, month: month, busy: false, error: '', blob: blob, file: file, name: res.fileName, url: res.url };
+    }).catch(function (err) {
+      if (!S.month.inv || S.month.inv.owner !== owner) return;
+      S.month.inv = { owner: owner, month: month, busy: false, error: err.offline ? 'No signal. Preparing an invoice needs a connection.' : 'Could not make the invoice: ' + (err.message || err) };
+    }).finally(render);
+  }
+  // Runs straight from the tap: iPhones only open the share sheet from a direct tap.
+  function shareInvoice() {
+    var inv = S.month.inv;
+    if (!inv || !inv.blob) return;
+    if (inv.file && navigator.canShare && navigator.canShare({ files: [inv.file] })) {
+      navigator.share({ files: [inv.file], title: inv.name.replace(/\.pdf$/, '') }).catch(function (err) {
+        if (err && err.name !== 'AbortError') flash('Could not open sharing: ' + (err.message || err));
+      });
+      return;
+    }
+    // No share sheet (some laptops): save the PDF instead.
+    var url = URL.createObjectURL(inv.blob);
+    var a = document.createElement('a');
+    a.href = url; a.download = inv.name; document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(function () { URL.revokeObjectURL(url); }, 10000);
+    flash('Invoice saved to Downloads');
   }
 
   function connect() {
@@ -817,7 +860,22 @@
       h.push('<div class="stack-lg"><div class="label">Before you send</div>' + d.checks.map(function (c) {
         return '<div class="check"><span class="mark' + (c.ok ? '' : ' warn') + '">' + (c.ok ? ICON.check : ICON.warn) + '</span><span>' + esc(c.text) + '</span></div>';
       }).join('') + '</div>');
-      h.push('<p class="small">To make the PDFs: open the Sheet on the laptop, then Mountain Way menu › Build invoices.</p>');
+      var inv = m.inv && m.inv.owner === m.owner && m.inv.month === m.month ? m.inv : null;
+      var missing = d.checks.filter(function (c) { return !c.ok; }).length;
+      h.push('<div class="stack-lg"><div class="label">Invoice</div>');
+      if (inv && inv.blob) {
+        h.push('<button class="primary share-btn" data-action="shareInvoice">' + ICON.share + '<span>Share invoice</span></button>' +
+          '<p class="small">PDF ready, and saved in Drive under Invoices › ' + esc(m.month) + '. Share sends it by text, email or any app.' +
+          (inv.url ? ' <a href="' + esc(inv.url) + '" target="_blank" rel="noopener">Open PDF</a>' : '') + '</p>' +
+          '<button class="linkbtn" data-action="prepInvoice">Remake it (after changes)</button>');
+      } else {
+        h.push('<button class="primary" data-action="prepInvoice"' + (inv && inv.busy ? ' disabled' : '') + '>' +
+          (inv && inv.busy ? 'Preparing invoice…' : missing ? 'Prepare invoice anyway' : 'Prepare invoice') + '</button>');
+        if (inv && inv.error) h.push('<div class="error" role="alert">' + esc(inv.error) + '</div>');
+        else if (missing) h.push('<p class="small">' + missing + (missing === 1 ? ' item above is' : ' items above are') + ' still missing. The invoice will leave ' + (missing === 1 ? 'it' : 'them') + ' out until filled in.</p>');
+        else h.push('<p class="small">Makes the PDF for ' + esc(d.owner.label) + ', then lets you send it by text, email or any app.</p>');
+      }
+      h.push('</div>');
       h.push('<button class="secondary" data-action="reloadMonth">' + (m.loading ? 'Refreshing…' : 'Refresh') + '</button>');
     }
     h.push('</div></main>' + tabs('month'));
